@@ -1,12 +1,12 @@
 name: Windows RDP via Tailscale
 
 on:
-  workflow_dispatch: # Allows you to start it manually from the Actions tab
+  workflow_dispatch:
 
 jobs:
   rdp:
     runs-on: windows-latest
-    timeout-minutes: 360 # Keeps the session alive for up to 6 hours
+    timeout-minutes: 360
 
     steps:
       - name: Checkout Repository
@@ -26,15 +26,11 @@ jobs:
           $username = "${{ secrets.RDP_USERNAME }}"
           $password = "${{ secrets.RDP_PASSWORD }}"
           
-          if (-not $username) { $username = "adminuser" }
-          if (-not $password) { 
-              $password = "AdminP@ss123!"
-              Write-Host "Warning: RDP_PASSWORD secret is missing. Using default fallback password: AdminP@ss123!"
-          }
+          if ([string]::IsNullOrWhiteSpace($username)) { $username = "adminuser" }
+          if ([string]::IsNullOrWhiteSpace($password)) { $password = "AdminP@ss123!" }
 
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
           
-          # Check if user already exists, create if not
           if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
               New-LocalUser -Name $username -Password $securePass -AccountNeverExpires -FullName "RDP User"
           } else {
@@ -44,31 +40,34 @@ jobs:
           Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
           
-          Write-Host "RDP User configured successfully: $username"
+          Write-Host "Configured RDP Username: $username"
 
       - name: Connect to Tailscale
         uses: tailscale/github-action@v4
         with:
-          authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
           hostname: windows-cloud-pc
           tags: tag:ci
 
-      - name: Get Tailscale IP & Display Connection Info
+      - name: Display Connection Info
         shell: powershell
         run: |
           $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-          
+          $user = "${{ secrets.RDP_USERNAME }}"
+          if ([string]::IsNullOrWhiteSpace($user)) { $user = "adminuser" }
+
           Write-Host "`n=================================================="
-          Write-Host " RDP ACCESS DETAILS FOR WINDOWS APP"
+          Write-Host " WINDOWS APP CONNECTION DETAILS"
           Write-Host "--------------------------------------------------"
-          Write-Host " Tailscale IP Address : $tsIP"
-          Write-Host " Username             : ${{ secrets.RDP_USERNAME }}"
+          Write-Host " PC Name / IP : $tsIP"
+          Write-Host " Username     : $user"
+          Write-Host " Password     : (Your RDP_PASSWORD secret, or AdminP@ss123! if unset)"
           Write-Host "==================================================`n"
 
       - name: Keep Runner Alive
         shell: powershell
         run: |
-          Write-Host "Runner is ready. Staying active until you cancel the workflow..."
+          Write-Host "Session is live. Cancel the workflow when finished."
           while ($true) {
               Start-Sleep -Seconds 300
           }
