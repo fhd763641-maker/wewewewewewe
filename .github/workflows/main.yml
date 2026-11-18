@@ -1,19 +1,69 @@
-name: RDP by JoyWardanaa
+name: Windows RDP via Tailscale
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Allows you to start it manually from the Actions tab
 
 jobs:
-  secure-rdp:
-  
+  rdp:
     runs-on: windows-latest
-    timeout-minutes: 3600
+    timeout-minutes: 360 # Keeps the session alive for up to 6 hours
 
     steps:
-      - name: Configure Core RDP Settings
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Enable Remote Desktop (RDP)
+        shell: powershell
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
-          netsh advfirewall firewall delete rule name="RDP-Tailscale"
-          netsh advfirewall firewall add rule name="RemoteDesktop-UserMode-In-TCP" dir=in action=allow protocol=TCP localport=3389
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1 -Force
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
+
+      - name: Create RDP User Credentials
+        shell: powershell
+        run: |
+          $username = "${{ secrets.RDP_USERNAME }}"
+          $password = "${{ secrets.RDP_PASSWORD }}"
+          
+          if (-not $username) { $username = "adminuser" }
+          if (-not $password) { 
+              Write-Error "RDP_PASSWORD secret is missing! Please configure it in repository secrets."
+              exit 1 
+          }
+
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          New-LocalUser -Name $username -Password $securePass -AccountNeverExpires -FullName "RDP User"
+          Add-LocalGroupMember -Group "Administrators" -Member $username
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
+          
+          Write-Host "RDP User created successfully: $username"
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          hostname: windows-cloud-pc
+          tags: tag:ci
+
+      - name: Get Tailscale IP & Display Connection Info
+        shell: powershell
+        run: |
+          # Fetch the Tailscale IP of this runner
+          $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+          
+          Write-Host "`n=================================================="
+          Write-Host " RDP ACCESS DETAILS FOR WINDOWS APP"
+          Write-Host "--------------------------------------------------"
+          Write-Host " Tailscale IP Address : $tsIP"
+          Write-Host " Username             : ${{ secrets.RDP_USERNAME }}"
+          Write-Host " Password             : (Provided in GitHub Secrets)"
+          Write-Host "==================================================`n"
+
+      - name: Keep Runner Alive
+        shell: powershell
+        run: |
+          Write-Host "Runner is ready. Staying active until you cancel the workflow..."
+          while ($true) {
+              Start-Sleep -Seconds 300
+          }
